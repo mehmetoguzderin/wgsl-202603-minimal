@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>WebGPU Compute Lab</title>
+
+    <style>
+        body {
+            background: radial-gradient(circle at 20% 20%, #ff00cc33, #000),
+                linear-gradient(135deg, #090018, #000);
+            color: white;
+            font-family: system-ui;
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* retro grid */
+
+        body::before {
+            content: "";
+            position: fixed;
+            width: 200%;
+            height: 200%;
+            background:
+                linear-gradient(#ffffff05 1px, transparent 1px),
+                linear-gradient(90deg, #ffffff05 1px, transparent 1px);
+            background-size: 40px 40px;
+            transform: perspective(800px) rotateX(60deg);
+            top: -50%;
+            left: -50%;
+        }
+
+        /* glass card */
+
+        .panel {
+            backdrop-filter: blur(20px) saturate(140%);
+            background: linear-gradient(135deg,
+                    rgba(255, 255, 255, .1),
+                    rgba(255, 255, 255, .02));
+
+            border: 1px solid rgba(255, 255, 255, .15);
+            border-radius: 24px;
+            padding: 40px;
+            width: 420px;
+
+            box-shadow:
+                0 0 40px #ff00cc33,
+                inset 0 0 20px #ffffff10;
+
+        }
+
+        /* title */
+
+        h1 {
+            margin-top: 0;
+            font-weight: 600;
+            letter-spacing: .1em;
+
+            background: linear-gradient(90deg, #ff00cc, #00eaff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* tactile sliders */
+
+        input[type=range] {
+            width: 100%;
+            margin: 10px 0;
+
+            appearance: none;
+            height: 6px;
+            border-radius: 4px;
+
+            background: linear-gradient(90deg, #ff00cc, #00eaff);
+
+            box-shadow:
+                0 0 10px #ff00cc88;
+
+        }
+
+        button {
+
+            margin-top: 20px;
+            width: 100%;
+            padding: 14px;
+
+            border-radius: 12px;
+            border: none;
+
+            font-size: 16px;
+
+            background: linear-gradient(90deg, #ff00cc, #00eaff);
+            color: black;
+            font-weight: bold;
+
+            cursor: pointer;
+
+            transition: .2s;
+
+            box-shadow:
+                0 0 20px #ff00cc88;
+
+        }
+
+        button:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow:
+                0 0 40px #00eaff;
+        }
+
+        /* result bars */
+
+        .results {
+            margin-top: 30px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .bar {
+            height: 14px;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #ff00cc, #00eaff);
+            box-shadow: 0 0 10px #ff00cc;
+            transition: .4s;
+        }
+
+        .scanlines {
+            position: fixed;
+            pointer-events: none;
+            width: 100%;
+            height: 100%;
+
+            background:
+                repeating-linear-gradient(transparent 0px,
+                    transparent 3px,
+                    rgba(255, 255, 255, .03) 4px);
+
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="scanlines"></div>
+
+    <div class="panel">
+
+        <h1>WEBGPU COMPUTE LAB</h1>
+
+        <label>A values</label>
+        <input id="a1" type="range" min="0" max="10" value="1">
+        <input id="a2" type="range" min="0" max="10" value="2">
+        <input id="a3" type="range" min="0" max="10" value="3">
+        <input id="a4" type="range" min="0" max="10" value="4">
+
+        <label>B values</label>
+        <input id="b1" type="range" min="0" max="10" value="10">
+        <input id="b2" type="range" min="0" max="10" value="20">
+        <input id="b3" type="range" min="0" max="10" value="30">
+        <input id="b4" type="range" min="0" max="10" value="40">
+
+        <button id="run">Run GPU Compute</button>
+
+        <div class="results">
+            <div class="bar" id="r0"></div>
+            <div class="bar" id="r1"></div>
+            <div class="bar" id="r2"></div>
+            <div class="bar" id="r3"></div>
+        </div>
+
+    </div>
+
+    <script type="module">
+
+        async function compute(a, b) {
+
+            const adapter = await navigator.gpu.requestAdapter()
+            const device = await adapter.requestDevice()
+
+            const shader = `
+
+@group(0) @binding(0) var<storage,read> a:array<f32>;
+@group(0) @binding(1) var<storage,read> b:array<f32>;
+@group(0) @binding(2) var<storage,read_write> result:array<f32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) id:vec3<u32>){
+let i=id.x;
+result[i]=a[i]+b[i];
+}
+
+`
+
+            const module = device.createShaderModule({ code: shader })
+
+            const pipeline = device.createComputePipeline({
+                layout: "auto",
+                compute: { module, entryPoint: "main" }
+            })
+
+            function buffer(arr, usage) {
+
+                const buf = device.createBuffer({
+                    size: arr.byteLength,
+                    usage,
+                    mappedAtCreation: true
+                })
+
+                new Float32Array(buf.getMappedRange()).set(arr)
+                buf.unmap()
+
+                return buf
+            }
+
+            const aBuf = buffer(a, GPUBufferUsage.STORAGE)
+            const bBuf = buffer(b, GPUBufferUsage.STORAGE)
+
+            const resultBuf = device.createBuffer({
+                size: a.byteLength,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+            })
+
+            const readBuf = device.createBuffer({
+                size: a.byteLength,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            })
+
+            const bind = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: { buffer: aBuf } },
+                    { binding: 1, resource: { buffer: bBuf } },
+                    { binding: 2, resource: { buffer: resultBuf } }
+                ]
+            })
+
+            const enc = device.createCommandEncoder()
+            const pass = enc.beginComputePass()
+
+            pass.setPipeline(pipeline)
+            pass.setBindGroup(0, bind)
+            pass.dispatchWorkgroups(a.length)
+
+            pass.end()
+
+            enc.copyBufferToBuffer(resultBuf, 0, readBuf, 0, a.byteLength)
+
+            device.queue.submit([enc.finish()])
+
+            await readBuf.mapAsync(GPUMapMode.READ)
+
+            return new Float32Array(readBuf.getMappedRange())
+
+        }
+
+        document.getElementById("run").onclick = async () => {
+
+            const a = new Float32Array([
+                a1.value, a2.value, a3.value, a4.value
+            ])
+
+            const b = new Float32Array([
+                b1.value, b2.value, b3.value, b4.value
+            ])
+
+            const res = await compute(a, b)
+
+            res.forEach((v, i) => {
+                const bar = document.getElementById("r" + i)
+                bar.style.width = (v * 8) + "%"
+            })
+
+        }
+
+    </script>
+
+</body>
+
+</html>
